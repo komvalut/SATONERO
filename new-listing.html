@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kupi</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav><a href="/">⬅ Nazad</a></nav>
+    <div class="container" id="detalji"></div>
+    <div class="container">
+        <input type="text" id="buyerId" placeholder="Tvoj Nickname" required>
+        <button onclick="kupi()" class="btn-main">Prihvati razmenu</button>
+        <div id="payArea" style="display:none; margin-top:20px; word-break:break-all;">
+            <p>Plati Lightning Invoice:</p>
+            <code id="inv" style="background:#000; padding:10px; display:block;"></code>
+        </div>
+    </div>
+    <script>
+        const id = new URLSearchParams(window.location.search).get('id');
+        async function kupi() {
+            const buyerId = document.getElementById('buyerId').value;
+            const res = await fetch('/api/swap', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ listingId: id, buyerId })
+            });
+            const data = await res.json();
+            if(data.paymentRequest) {
+                document.getElementById('payArea').style.display = 'block';
+                document.getElementById('inv').innerText = data.paymentRequest;
+                setInterval(async () => {
+                    const r = await fetch('/api/tx/'+data.txId);
+                    const tx = await r.json();
+                    if(tx.status === 'paid') window.location.href = '/chat.html?tx='+data.txId;
+                }, 3000);
+            } else { window.location.href = '/chat.html?tx='+data.txId; }
+        }
+    </script>
+</body>
+</html>
