@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Postavi Oglas</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav><a href="/">⬅ Nazad</a></nav>
+    <div class="container">
+        <h2>Novi oglas</h2>
+        <form id="listingForm">
+            <input type="text" id="sellerId" placeholder="Tvoj Nickname" required>
+            <div class="row">
+                <div><label>Nudim:</label><select id="offerAsset"></select>
+                <input type="number" id="offerAmount" placeholder="Iznos" required></div>
+                <div><label>Tražim:</label><select id="wantAsset"></select>
+                <input type="number" id="wantAmount" placeholder="Iznos" required></div>
+            </div>
+            <textarea id="description" placeholder="Dodatni detalji..."></textarea>
+            <button type="submit" class="btn-main">Objavi</button>
+        </form>
+    </div>
+    <script>
+        async function load() {
+            const res = await fetch('/api/assets');
+            const assets = await res.json();
+            const selects = [document.getElementById('offerAsset'), document.getElementById('wantAsset')];
+            selects.forEach(s => s.innerHTML = assets.map(a => `<option value="${a.id}">${a.name}</option>`).join(''));
+        }
+        document.getElementById('listingForm').onsubmit = async (e) => {
+            e.preventDefault();
+            await fetch('/api/listings', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    sellerId: document.getElementById('sellerId').value,
+                    offerAsset: document.getElementById('offerAsset').value,
+                    offerAmount: document.getElementById('offerAmount').value,
+                    wantAsset: document.getElementById('wantAsset').value,
+                    wantAmount: document.getElementById('wantAmount').value,
+                    description: document.getElementById('description').value
+                })
+            });
+            window.location.href = '/';
+        };
+        load();
+    </script>
+</body>
+</html>
