@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Micro P2P Marketplace</title>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; padding: 20px; }
+        .asset-card { border: 1px solid #333; padding: 10px; margin: 5px; display: inline-block; border-radius: 8px; }
+        .tag { font-size: 0.8em; background: orange; color: black; padding: 2px 5px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>P2P Marketplace</h1>
+    <div id="assets-list">Učitavam asete...</div>
+
+    <script>
+        async function loadAssets() {
+            const res = await fetch('/api/assets');
+            const assets = await res.json();
+            const container = document.getElementById('assets-list');
+            container.innerHTML = assets.map(a => `
+                <div class="asset-card">
+                    <strong>${a.name}</strong> <span class="tag">${a.type}</span>
+                    <br><small>${a.symbol || ''}</small>
+                </div>
+            `).join('');
+        }
+        loadAssets();
+    </script>
+</body>
+</html>
