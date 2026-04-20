@@ -1664,6 +1664,21 @@ app.get('/icon.svg', (req, res) => {
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
-initDb().then(() => {
-  app.listen(PORT, () => console.log('SATONERO running on port ' + PORT));
-}).catch(e => { console.error('DB init failed:', e.message); process.exit(1); });
+async function startWithRetry(attempt) {
+  if (!DB_URL) {
+    console.error('ERROR: DATABASE_URL environment variable is not set!');
+    console.error('Create a PostgreSQL database on Render and add DATABASE_URL env var.');
+    process.exit(1);
+  }
+  try {
+    await initDb();
+    app.listen(PORT, () => console.log('SATONERO running on port ' + PORT));
+  } catch(e) {
+    console.error('DB init failed (attempt ' + attempt + '):', e.message);
+    if (attempt >= 5) { console.error('Max retries reached. Exiting.'); process.exit(1); }
+    const delay = attempt * 3000;
+    console.log('Retrying in ' + (delay/1000) + 's...');
+    setTimeout(() => startWithRetry(attempt + 1), delay);
+  }
+}
+startWithRetry(1);
