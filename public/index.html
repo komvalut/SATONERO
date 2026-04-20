@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Market | Početna</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav>
+        <div class="logo">P2P Market</div>
+        <div>
+            <a href="new-listing.html" class="btn-nav">+ Postavi Oglas</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header style="text-align: center; margin: 40px 0;">
+            <h1>Kupuj i prodaj bez posrednika</h1>
+            <p style="color: #888;">Sigurna razmena vaučera za Bitcoin (Satoshi)</p>
+        </header>
+
+        <div id="listings-grid" class="grid">
+            <p style="text-align: center; width: 100%;">Učitavam oglase...</p>
+        </div>
+    </div>
+
+    <script>
+        async function fetchListings() {
+            try {
+                const response = await fetch('/api/listings');
+                const listings = await response.json();
+                const grid = document.getElementById('listings-grid');
+
+                if (listings.length === 0) {
+                    grid.innerHTML = '<p style="text-align: center; width: 100%;">Trenutno nema aktivnih oglasa. Budi prvi!</p>';
+                    return;
+                }
+
+                grid.innerHTML = listings.map(l => `
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <span class="badge">${l.offer_name}</span>
+                            <span style="color: #888; font-size: 12px;">Prodavac: ${l.seller_id}</span>
+                        </div>
+                        <div style="margin: 15px 0;">
+                            <h3 style="margin: 0; color: #f2a900;">${l.offer_amount} ${l.offer_name}</h3>
+                            <p style="margin: 5px 0; font-size: 14px;">Tražim: <strong>${l.want_amount} ${l.want_name}</strong></p>
+                        </div>
+                        <p style="font-size: 13px; color: #bbb; height: 40px; overflow: hidden;">${l.description || 'Nema opisa.'}</p>
+                        <a href="listing.html?id=${l.id}" class="btn-main" style="text-decoration: none; display: block; text-align: center;">Pogledaj ponudu</a>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Greška pri učitavanju:', error);
+                document.getElementById('listings-grid').innerHTML = '<p>Greška pri povezivanju sa serverom.</p>';
+            }
+        }
+
+        // Učitaj oglase čim se stranica otvori
+        fetchListings();
+    </script>
+</body>
+</html>
