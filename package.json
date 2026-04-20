@@ -1,0 +1,17 @@
+{
+  "name": "satonero",
+  "version": "1.0.0",
+  "description": "SATONERO - Micro P2P Market powered by Bitcoin Lightning",
+  "main": "server.cjs",
+  "scripts": {
+    "start": "node server.cjs"
+  },
+  "dependencies": {
+    "express": "^4",
+    "pg": "^8",
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
