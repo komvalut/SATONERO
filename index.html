@@ -4,29 +4,61 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Micro P2P Marketplace</title>
-    <style>
-        body { font-family: sans-serif; background: #121212; color: white; padding: 20px; }
-        .asset-card { border: 1px solid #333; padding: 10px; margin: 5px; display: inline-block; border-radius: 8px; }
-        .tag { font-size: 0.8em; background: orange; color: black; padding: 2px 5px; border-radius: 4px; }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>P2P Marketplace</h1>
-    <div id="assets-list">Učitavam asete...</div>
+    <nav>
+        <div class="nav-container">
+            <strong>SatMarket P2P</strong>
+            <div>
+                <a href="/">Swap</a>
+                <a href="/new-listing.html" class="btn-sm"> + Postavi Oglas</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header style="text-align: center; margin: 20px 0;">
+            <h1>P2P Razmena bez posrednika</h1>
+            <p>Trguj direktno u Satoshi-ma (Sats)</p>
+        </header>
+
+        <div id="listings-grid" class="grid">
+            <p style="text-align: center; grid-column: 1/-1;">Učitavam oglase...</p>
+        </div>
+    </div>
 
     <script>
-        async function loadAssets() {
-            const res = await fetch('/api/assets');
-            const assets = await res.json();
-            const container = document.getElementById('assets-list');
-            container.innerHTML = assets.map(a => `
-                <div class="asset-card">
-                    <strong>${a.name}</strong> <span class="tag">${a.type}</span>
-                    <br><small>${a.symbol || ''}</small>
-                </div>
-            `).join('');
+        async function loadListings() {
+            try {
+                const res = await fetch('/api/listings');
+                const data = await res.json();
+                const grid = document.getElementById('listings-grid');
+                
+                if (data.length === 0) {
+                    grid.innerHTML = '<p style="grid-column: 1/-1; text-align:center;">Trenutno nema aktivnih oglasa.</p>';
+                    return;
+                }
+
+                grid.innerHTML = data.map(l => `
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="badge">${l.offer_name}</span> ➔ <span class="badge">${l.want_name}</span>
+                        </div>
+                        <div class="card-body">
+                            <h2>${l.offer_amount} ➔ ${l.want_amount}</h2>
+                            <p>Prodavac: <strong>${l.seller_id}</strong></p>
+                            <p class="desc">${l.description || 'Nema opisa.'}</p>
+                        </div>
+                        <button onclick="window.location='/listing.html?id=${l.id}'" class="btn-main">Zameni</button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error("Greška pri učitavanju:", err);
+            }
         }
-        loadAssets();
+        
+        loadListings();
     </script>
 </body>
 </html>
