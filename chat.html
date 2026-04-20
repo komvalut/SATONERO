@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div id="msgBox" style="height:300px; overflow-y:auto; background:#1a1a1a; margin-bottom:10px; padding:10px;"></div>
+        <input type="text" id="mIn" placeholder="Poruka..."><button onclick="send()">Šalji</button>
+        <button onclick="release()" id="relBtn" style="display:none; background:green; color:white; margin-top:20px; width:100%; padding:10px;">POTVRDI PRIJEM (Release Sats)</button>
+    </div>
+    <script>
+        const txId = new URLSearchParams(window.location.search).get('tx');
+        const nick = prompt("Nickname?");
+        async function load() {
+            const res = await fetch('/api/chat/'+txId);
+            const msgs = await res.json();
+            document.getElementById('msgBox').innerHTML = msgs.map(m => `<div><b>${m.sender_id}:</b> ${m.content}</div>`).join('');
+            const txR = await fetch('/api/tx/'+txId);
+            const tx = await txR.json();
+            if(tx.status === 'paid' && tx.buyer_id === nick) document.getElementById('relBtn').style.display = 'block';
+        }
+        async function send() {
+            await fetch('/api/chat/'+txId, {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({senderId: nick, content: document.getElementById('mIn').value})
+            });
+            document.getElementById('mIn').value = ''; load();
+        }
+        async function release() {
+            await fetch('/api/confirm/'+txId, {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({buyerId: nick})
+            });
+            alert("Završeno!"); window.location.href = '/';
+        }
+        setInterval(load, 3000); load();
+    </script>
+</body>
+</html>
