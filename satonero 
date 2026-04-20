@@ -1,0 +1,11 @@
+standalone/
+├── server.cjs        ← backend (sav kod)
+├── package.json      ← dependencies
+├── schema.sql        ← SQL za bazu
+├── .env.example      ← šablon za env varijable
+├── README.md         ← upute
+└── public/           ← frontend (već kopiran!)
+    ├── index.html
+    └── assets/
+        ├── index.css
+        └── index.js
