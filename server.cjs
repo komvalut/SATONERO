@@ -88,6 +88,9 @@ async function initDb() {
   await pool.query(`CREATE TABLE IF NOT EXISTS sato_tasks (id TEXT PRIMARY KEY, poster_id TEXT NOT NULL, worker_id TEXT, title TEXT NOT NULL, description TEXT NOT NULL, reward_sats BIGINT NOT NULL, proof_required TEXT, status TEXT DEFAULT 'open', invoice_id TEXT, payment_request TEXT, proof_submission TEXT, created_at BIGINT, taken_at BIGINT, completed_at BIGINT)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS sato_predictions (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, asset TEXT NOT NULL, target_price NUMERIC NOT NULL, direction TEXT NOT NULL, resolve_at BIGINT NOT NULL, stake_sats BIGINT NOT NULL, creator_side TEXT NOT NULL, challenger_id TEXT, challenger_side TEXT, status TEXT DEFAULT 'open', winner_id TEXT, commission_sats BIGINT DEFAULT 0, invoice_id TEXT, payment_request TEXT, challenger_invoice_id TEXT, challenger_payment_request TEXT, created_at BIGINT, resolved_at BIGINT)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS sato_data_listings (id TEXT PRIMARY KEY, seller_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, type TEXT NOT NULL, price_sats BIGINT NOT NULL, duration_hours INT, status TEXT DEFAULT 'active', created_at BIGINT)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS sato_news (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, admin_id TEXT DEFAULT 'admin', created_at BIGINT)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS sato_referrals (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, bonus_sats BIGINT NOT NULL, uses INT DEFAULT 0, max_uses INT DEFAULT 100, description TEXT, active BOOLEAN DEFAULT true, created_at BIGINT)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS sato_referral_uses (id TEXT PRIMARY KEY, code TEXT NOT NULL, user_id TEXT NOT NULL, created_at BIGINT)`);
 
   const assets = [
     ['sats','Satoshi (Lightning)','crypto','SATS',null,0,null],
@@ -141,6 +144,62 @@ setInterval(async () => {
 }, 60000);
 
 // --- ROUTES ---
+
+// NEWS
+app.get('/api/news', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM sato_news ORDER BY created_at DESC LIMIT 20');
+  res.json(rows);
+});
+app.post('/api/admin/news', async (req, res) => {
+  const { adminKey, title, content } = req.body;
+  if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  if (!title || !content) return res.status(400).json({ error: 'title and content required' });
+  const id = uid();
+  await pool.query('INSERT INTO sato_news (id,title,content,admin_id,created_at) VALUES ($1,$2,$3,$4,$5)', [id, title, content, 'admin', now()]);
+  res.json({ ok: true, id });
+});
+app.delete('/api/admin/news/:id', async (req, res) => {
+  const { adminKey } = req.body;
+  if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  await pool.query('DELETE FROM sato_news WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// REFERRALS
+app.get('/api/admin/referrals', async (req, res) => {
+  const { adminKey } = req.query;
+  if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  const { rows } = await pool.query('SELECT * FROM sato_referrals ORDER BY created_at DESC');
+  res.json(rows);
+});
+app.post('/api/admin/referrals', async (req, res) => {
+  const { adminKey, code, bonusSats, maxUses, description } = req.body;
+  if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  if (!code || !bonusSats) return res.status(400).json({ error: 'code and bonusSats required' });
+  const id = uid();
+  await pool.query('INSERT INTO sato_referrals (id,code,bonus_sats,max_uses,description,created_at) VALUES ($1,$2,$3,$4,$5,$6)', [id, code.toUpperCase(), Number(bonusSats), maxUses||100, description||null, now()]);
+  res.json({ ok: true, id });
+});
+app.delete('/api/admin/referrals/:id', async (req, res) => {
+  const { adminKey } = req.body;
+  if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  await pool.query('DELETE FROM sato_referrals WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+app.post('/api/referral/use', async (req, res) => {
+  const { userId, code } = req.body;
+  if (!userId || !code) return res.status(400).json({ error: 'userId and code required' });
+  const { rows } = await pool.query("SELECT * FROM sato_referrals WHERE code=$1 AND active=true", [code.toUpperCase()]);
+  if (!rows.length) return res.status(404).json({ error: 'Invalid or inactive code' });
+  const ref = rows[0];
+  if (ref.uses >= ref.max_uses) return res.status(400).json({ error: 'Code usage limit reached' });
+  const { rows: used } = await pool.query('SELECT id FROM sato_referral_uses WHERE code=$1 AND user_id=$2', [code.toUpperCase(), userId]);
+  if (used.length) return res.status(400).json({ error: 'You already used this code' });
+  await pool.query('INSERT INTO sato_referral_uses (id,code,user_id,created_at) VALUES ($1,$2,$3,$4)', [uid(), code.toUpperCase(), userId, now()]);
+  await pool.query('UPDATE sato_referrals SET uses=uses+1 WHERE id=$1', [ref.id]);
+  await pool.query('UPDATE sato_users SET balance_sats=balance_sats+$1 WHERE id=$2', [ref.bonus_sats, userId]);
+  res.json({ ok: true, bonus_sats: ref.bonus_sats });
+});
 
 // ASSETS
 app.get('/api/assets', async (req, res) => {
@@ -665,17 +724,45 @@ textarea{resize:vertical;min-height:60px;}
 .btn-lang{background:#1e2d40;border:1px solid #2a3a50;padding:0 10px;height:36px;border-radius:20px;font-size:0.8em;font-weight:700;display:inline-flex;align-items:center;gap:4px;color:#94a3b8;cursor:pointer;transition:transform 0.2s;}
 .btn-lang:hover{transform:scale(1.07);color:#e2e8f0;}
 .header-controls{display:flex;align-items:center;gap:6px;margin-left:8px;flex-shrink:0;}
+.dash-hero{text-align:center;padding:18px 0 14px;border-bottom:1px solid #1e2d40;margin-bottom:18px;}
+.dash-hero h1{font-size:1.6em;font-weight:900;letter-spacing:-1px;margin-bottom:4px;}
+.dash-hero h1 span{color:#ff5500;}
+.dash-hero p{color:#64748b;font-size:0.85em;max-width:380px;margin:0 auto 12px;}
+.dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px;margin-bottom:20px;}
+.dash-card{background:#0f1824;border:2px solid var(--dca,#ff5500);border-radius:18px;padding:18px;position:relative;overflow:hidden;transition:transform 0.2s,border-color 0.3s;cursor:pointer;}
+.dash-card:hover{transform:translateY(-3px);}
+.dash-card::after{content:'';position:absolute;top:0;right:0;width:80px;height:80px;background:radial-gradient(circle,var(--dca,#ff5500),transparent 70%);opacity:0.08;border-radius:0 18px 0 80px;}
+.dash-card-icon{font-size:2em;margin-bottom:8px;display:block;line-height:1;}
+.dash-card-tag{font-size:0.68em;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dca,#ff5500);margin-bottom:4px;}
+.dash-card-title{font-size:0.98em;font-weight:800;color:#e2e8f0;margin-bottom:6px;}
+.dash-card-desc{font-size:0.79em;color:#64748b;line-height:1.55;margin-bottom:14px;}
+.dash-card-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.dash-card-clr{background:none;border:1px solid #2a3a50;color:#475569;border-radius:20px;padding:4px 10px;font-size:0.72em;cursor:pointer;transition:all 0.2s;white-space:nowrap;}
+.dash-card-clr:hover{border-color:var(--dca,#ff5500);color:#e2e8f0;}
+.dash-enter{background:linear-gradient(135deg,var(--dca,#ff5500),var(--dcb,#cc1a00));color:#fff;border:none;border-radius:10px;padding:7px 16px;font-size:0.82em;font-weight:700;cursor:pointer;flex-shrink:0;}
+.news-strip{margin-bottom:16px;}
+.news-strip-title{font-size:0.78em;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#475569;margin-bottom:8px;}
+.news-item{background:#0f1824;border:1px solid #1e2d40;border-radius:12px;padding:12px 14px;margin-bottom:8px;}
+.news-item-date{font-size:0.72em;color:#475569;margin-bottom:3px;}
+.news-item-title{font-size:0.9em;font-weight:700;color:#e2e8f0;margin-bottom:4px;}
+.news-item-body{font-size:0.82em;color:#94a3b8;line-height:1.5;}
+.ref-row{display:flex;align-items:center;justify-content:space-between;background:#080c12;border:1px solid #fbbf24;border-radius:10px;padding:10px 14px;margin-bottom:8px;gap:8px;flex-wrap:wrap;}
+.ref-code{font-size:1em;font-weight:800;letter-spacing:2px;color:#fbbf24;}
+.ref-meta{font-size:0.78em;color:#64748b;}
+@media(max-width:480px){.dash-grid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
 <header>
   <div class='logo'>&#9889;<span>SATO</span>NERO</div>
   <nav>
-    <button id='nav-swap' class='active' onclick='switchTab("swap")'>&#128257; Swap</button>
+    <button id='nav-home' class='active' onclick='switchTab("home")'>&#9889; Home</button>
+    <button id='nav-swap' onclick='switchTab("swap")'>&#128257; Swap</button>
     <button id='nav-lend' onclick='switchTab("lend")'>&#128176; Lend</button>
     <button id='nav-tasks' onclick='switchTab("tasks")'>&#9989; Tasks</button>
     <button id='nav-predict' onclick='switchTab("predict")'>&#127919; Predict</button>
     <button id='nav-data' onclick='switchTab("data")'>&#128274; Data</button>
+    <button id='nav-news' onclick='switchTab("news")'>&#128240; News</button>
     <button id='nav-profile' onclick='switchTab("profile")'>&#128100; Me</button>
     <button id='nav-admin' onclick='switchTab("admin")'>&#9881;</button>
   </nav>
@@ -694,7 +781,84 @@ textarea{resize:vertical;min-height:60px;}
     <button class='btn btn-sm' onclick='showDepositModal()'>+ Deposit</button>
   </div>
 
-  <div id='tab-swap' class='tab-content active'>
+  <div id='tab-home' class='tab-content active'>
+    <div class='dash-hero'>
+      <h1>&#9889; <span>SATO</span>NERO</h1>
+      <p>Micro P2P marketplace. No registration. No minimum. All in Bitcoin Lightning.</p>
+    </div>
+    <div id='news-strip-home' class='news-strip' style='display:none'>
+      <div class='news-strip-title'>&#128240; Latest News</div>
+      <div id='news-strip-list'></div>
+    </div>
+    <div class='dash-grid' id='dash-grid'>
+      <div class='dash-card' id='dc-swap' data-tab='swap' data-ci='0' onclick='dcEnter(event,"swap")'>
+        <span class='dash-card-icon'>&#128257;</span>
+        <div class='dash-card-tag'>P2P MARKET</div>
+        <div class='dash-card-title'>P2P Micro Swap</div>
+        <div class='dash-card-desc'>Trade crypto, tokens and digital assets directly with other users. Post your offer and match with a buyer or seller. Escrow protected.</div>
+        <div class='dash-card-footer'>
+          <button class='dash-card-clr' data-ci='0' onclick='cycleCardTheme(event,"dc-swap",0)'>&#127744; Color</button>
+          <button class='dash-enter' data-tab='swap' onclick='dcEnter(event,"swap")'>Enter Market &#8594;</button>
+        </div>
+      </div>
+      <div class='dash-card' id='dc-voucher' data-tab='swap' data-ci='1' onclick='dcEnter(event,"swap")'>
+        <span class='dash-card-icon'>&#127881;</span>
+        <div class='dash-card-tag'>P2P VOUCHERS</div>
+        <div class='dash-card-title'>P2P Voucher &amp; Gift Cards</div>
+        <div class='dash-card-desc'>Buy and sell Paysafecard, Steam, Amazon, Google Play and other gift cards. Set your price and trade safely with chat &amp; escrow.</div>
+        <div class='dash-card-footer'>
+          <button class='dash-card-clr' onclick='cycleCardTheme(event,"dc-voucher",1)'>&#127744; Color</button>
+          <button class='dash-enter' data-tab='swap' onclick='dcEnter(event,"swap")'>Enter Market &#8594;</button>
+        </div>
+      </div>
+      <div class='dash-card' id='dc-lend' data-tab='lend' data-ci='2' onclick='dcEnter(event,"lend")'>
+        <span class='dash-card-icon'>&#128176;</span>
+        <div class='dash-card-tag'>P2P LENDING</div>
+        <div class='dash-card-title'>P2P Lending</div>
+        <div class='dash-card-desc'>Borrow or lend satoshis with custom interest and terms. Set your own collateral requirements. P2P with no middleman.</div>
+        <div class='dash-card-footer'>
+          <button class='dash-card-clr' onclick='cycleCardTheme(event,"dc-lend",2)'>&#127744; Color</button>
+          <button class='dash-enter' data-tab='lend' onclick='dcEnter(event,"lend")'>Enter Market &#8594;</button>
+        </div>
+      </div>
+      <div class='dash-card' id='dc-tasks' data-tab='tasks' data-ci='3' onclick='dcEnter(event,"tasks")'>
+        <span class='dash-card-icon'>&#9989;</span>
+        <div class='dash-card-tag'>P2P TASKS</div>
+        <div class='dash-card-title'>P2P Micro Tasks</div>
+        <div class='dash-card-desc'>Post a task and pay a reward in sats. Or accept tasks and earn Bitcoin Lightning. Translation, design, data, anything goes.</div>
+        <div class='dash-card-footer'>
+          <button class='dash-card-clr' onclick='cycleCardTheme(event,"dc-tasks",3)'>&#127744; Color</button>
+          <button class='dash-enter' data-tab='tasks' onclick='dcEnter(event,"tasks")'>Enter Market &#8594;</button>
+        </div>
+      </div>
+      <div class='dash-card' id='dc-predict' data-tab='predict' data-ci='4' onclick='dcEnter(event,"predict")'>
+        <span class='dash-card-icon'>&#127919;</span>
+        <div class='dash-card-tag'>P2P PREDICTIONS</div>
+        <div class='dash-card-title'>Price Prediction</div>
+        <div class='dash-card-desc'>Challenge anyone to a price prediction duel. BTC, ETH, LTC and more. Winner takes all. Powered by live CoinGecko prices.</div>
+        <div class='dash-card-footer'>
+          <button class='dash-card-clr' onclick='cycleCardTheme(event,"dc-predict",4)'>&#127744; Color</button>
+          <button class='dash-enter' data-tab='predict' onclick='dcEnter(event,"predict")'>Enter Market &#8594;</button>
+        </div>
+      </div>
+      <div class='dash-card' id='dc-data' data-tab='data' data-ci='5' onclick='dcEnter(event,"data")'>
+        <span class='dash-card-icon'>&#128274;</span>
+        <div class='dash-card-tag'>DATA MARKET</div>
+        <div class='dash-card-title'>Data &amp; Proxy Market</div>
+        <div class='dash-card-desc'>Buy and sell proxy access, VPN accounts, API keys and digital data. Verified sellers with ratings. Pay once, access instantly.</div>
+        <div class='dash-card-footer'>
+          <button class='dash-card-clr' onclick='cycleCardTheme(event,"dc-data",5)'>&#127744; Color</button>
+          <button class='dash-enter' data-tab='data' onclick='dcEnter(event,"data")'>Enter Market &#8594;</button>
+        </div>
+      </div>
+    </div>
+    <div class='card' style='text-align:center;border-style:dashed;'>
+      <p style='font-size:0.85em;color:#64748b;margin-bottom:8px;'>&#128221; <strong style='color:#94a3b8;'>Want to list something else?</strong></p>
+      <p style='font-size:0.8em;color:#475569;'>This is an open marketplace. Post your swap, task, loan or data offer and reach buyers directly. No registration needed — just a nickname and Lightning wallet.</p>
+    </div>
+  </div>
+
+  <div id='tab-swap' class='tab-content'>
     <div class='row' style='margin-bottom:12px'>
       <h2 data-i18n='swap_title'>&#128257; Swap Market</h2>
       <button class='btn btn-sm' data-i18n='btn_new_listing' onclick='showNewListingModal()'>+ New Listing</button>
@@ -743,6 +907,21 @@ textarea{resize:vertical;min-height:60px;}
   <div id='tab-profile' class='tab-content'>
     <h2 data-i18n='nav_me'>&#128100; Me</h2>
     <div id='profile-content'><p class='muted'>Uloguj se ili unesi nickname.</p></div>
+    <div class='card' style='margin-top:12px;'>
+      <h3 style='margin-bottom:8px;'>&#127381; Referral Code</h3>
+      <p class='muted' style='font-size:0.82em;margin-bottom:10px;'>Have a referral code? Enter it to get bonus sats.</p>
+      <div style='display:flex;gap:8px;'>
+        <input id='ref-code-inp' placeholder='Enter code...' style='text-transform:uppercase;flex:1;'>
+        <button class='btn btn-sm' onclick='useReferral()'>&#9889; Use Code</button>
+      </div>
+    </div>
+  </div>
+
+  <div id='tab-news' class='tab-content'>
+    <div class='row' style='margin-bottom:12px'>
+      <h2>&#128240; News &amp; Updates</h2>
+    </div>
+    <div id='news-list'><p class='muted'>Loading...</p></div>
   </div>
 
   <div id='tab-admin' class='tab-content'>
@@ -752,7 +931,29 @@ textarea{resize:vertical;min-height:60px;}
       <button class='btn' onclick='adminLogin()'>Login</button>
       <p class='muted' style='margin-top:10px;font-size:0.8em;'>&#9993; Support email: <a href='mailto:__ADMIN_EMAIL__' style='color:#ff5500;'>__ADMIN_EMAIL__</a></p>
     </div>
-    <div id='admin-content' style='display:none'></div>
+    <div id='admin-content' style='display:none'>
+      <div class='card' style='margin-top:12px'>
+        <h3 style='margin-bottom:10px'>&#128240; Post News</h3>
+        <input id='adm-news-title' placeholder='News title...'>
+        <textarea id='adm-news-body' placeholder='News content...' style='min-height:70px'></textarea>
+        <button class='btn btn-sm' onclick='adminPostNews()'>&#9889; Publish News</button>
+      </div>
+      <div class='card' style='margin-top:12px'>
+        <h3 style='margin-bottom:10px'>&#127381; Create Referral Code</h3>
+        <div class='two-col'>
+          <div><label class='muted'>Code (uppercase)</label><input id='adm-ref-code' placeholder='SATONERO21'></div>
+          <div><label class='muted'>Bonus sats</label><input id='adm-ref-bonus' type='number' placeholder='500'></div>
+        </div>
+        <div class='two-col'>
+          <div><label class='muted'>Max uses</label><input id='adm-ref-max' type='number' placeholder='100'></div>
+          <div><label class='muted'>Description</label><input id='adm-ref-desc' placeholder='Optional'></div>
+        </div>
+        <button class='btn btn-sm' onclick='adminCreateReferral()'>&#9889; Create Code</button>
+      </div>
+      <div id='admin-refs' style='margin-top:12px'></div>
+      <div id='admin-news-list' style='margin-top:12px'></div>
+      <div id='admin-main-content' style='margin-top:12px'></div>
+    </div>
   </div>
 </main>
 
@@ -885,20 +1086,187 @@ async function loadBalance() {
   document.getElementById('bal-display').textContent = d.balance_sats || 0;
 }
 
+var CARD_THEMES = [
+  ['#ff5500','#cc1a00'],
+  ['#f59e0b','#b45309'],
+  ['#10b981','#065f46'],
+  ['#3b82f6','#1e3a8a'],
+  ['#8b5cf6','#4c1d95'],
+  ['#ec4899','#831843'],
+  ['#06b6d4','#0e7490']
+];
+
+var _cardColors = {};
+
+function applyCardTheme(cardId, idx) {
+  var card = document.getElementById(cardId);
+  if (!card) return;
+  var theme = CARD_THEMES[idx % CARD_THEMES.length];
+  card.style.setProperty('--dca', theme[0]);
+  card.style.setProperty('--dcb', theme[1]);
+  card.style.borderColor = theme[0];
+}
+
+function cycleCardTheme(evt, cardId, defaultIdx) {
+  evt.stopPropagation();
+  var key = 'card_ci_' + cardId;
+  var cur = parseInt(localStorage.getItem(key) || defaultIdx, 10);
+  var next = (cur + 1) % CARD_THEMES.length;
+  localStorage.setItem(key, next);
+  applyCardTheme(cardId, next);
+}
+
+function initCardThemes() {
+  var cards = [
+    {id:'dc-swap', def:0}, {id:'dc-voucher', def:1}, {id:'dc-lend', def:2},
+    {id:'dc-tasks', def:3}, {id:'dc-predict', def:4}, {id:'dc-data', def:5}
+  ];
+  cards.forEach(function(c) {
+    var saved = localStorage.getItem('card_ci_' + c.id);
+    var idx = saved !== null ? parseInt(saved, 10) : c.def;
+    applyCardTheme(c.id, idx);
+  });
+}
+
+function dcEnter(evt, tabName) {
+  evt.stopPropagation();
+  switchTab(tabName);
+}
+
 function switchTab(name) {
   _activeTab = name;
-  var tabs = ['swap','lend','tasks','predict','data','profile','admin'];
+  var tabs = ['home','swap','lend','tasks','predict','data','news','profile','admin'];
   tabs.forEach(function(t) {
     document.getElementById('tab-' + t).classList.toggle('active', t === name);
     var btn = document.getElementById('nav-' + t);
     if (btn) btn.classList.toggle('active', t === name);
   });
-  if (name === 'swap') loadSwap();
+  if (name === 'home') { loadHomeNews(); }
+  else if (name === 'swap') loadSwap();
   else if (name === 'lend') loadLoans();
   else if (name === 'tasks') loadTasks();
   else if (name === 'predict') loadPredictions();
   else if (name === 'data') loadData();
+  else if (name === 'news') loadNews();
   else if (name === 'profile') loadProfile();
+}
+
+async function loadNews() {
+  var el = document.getElementById('news-list');
+  if (!el) return;
+  var r = await fetch('/api/news');
+  var items = await r.json();
+  if (!items.length) { el.innerHTML = '<p class="muted">No news yet.</p>'; return; }
+  el.innerHTML = items.map(function(n) {
+    return '<div class="news-item"><div class="news-item-date">' + new Date(n.created_at).toLocaleDateString() + '</div>'
+      + '<div class="news-item-title">' + esc(n.title) + '</div>'
+      + '<div class="news-item-body">' + esc(n.content).replace(/\n/g,'<br>') + '</div></div>';
+  }).join('');
+}
+
+async function loadHomeNews() {
+  var r = await fetch('/api/news');
+  var items = await r.json();
+  var strip = document.getElementById('news-strip-home');
+  var list = document.getElementById('news-strip-list');
+  if (!items.length) { if (strip) strip.style.display = 'none'; return; }
+  if (strip) strip.style.display = '';
+  if (list) list.innerHTML = items.slice(0,2).map(function(n) {
+    return '<div class="news-item"><div class="news-item-date">' + new Date(n.created_at).toLocaleDateString() + '</div>'
+      + '<div class="news-item-title">' + esc(n.title) + '</div>'
+      + '<div class="news-item-body">' + esc(n.content).replace(/\n/g,'<br>') + '</div></div>';
+  }).join('') + (items.length > 2 ? '<p style="font-size:0.8em;text-align:right;"><a href="#" onclick="switchTab(\'news\');return false;" style="color:#ff5500">View all news &rarr;</a></p>' : '');
+}
+
+async function adminPostNews() {
+  var key = document.getElementById('admin-key-inp').value.trim();
+  var title = document.getElementById('adm-news-title').value.trim();
+  var content = document.getElementById('adm-news-body').value.trim();
+  if (!title || !content) return setStatus('Fill in title and content.', true);
+  var r = await fetch('/api/admin/news', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ adminKey: key, title: title, content: content }) });
+  var d = await r.json();
+  if (!r.ok) return setStatus(d.error || 'Error.', true);
+  setStatus('News published!', false);
+  document.getElementById('adm-news-title').value = '';
+  document.getElementById('adm-news-body').value = '';
+  loadAdminNews(key);
+}
+
+async function loadAdminNews(key) {
+  var el = document.getElementById('admin-news-list');
+  if (!el) return;
+  var r = await fetch('/api/news');
+  var items = await r.json();
+  if (!items.length) { el.innerHTML = '<p class="muted" style="font-size:0.8em">No news posted yet.</p>'; return; }
+  el.innerHTML = '<h4 style="margin-bottom:8px;color:#64748b">Posted News</h4>' + items.map(function(n) {
+    return '<div class="news-item" style="display:flex;align-items:flex-start;gap:10px">'
+      + '<div style="flex:1"><div class="news-item-date">' + new Date(n.created_at).toLocaleDateString() + '</div>'
+      + '<div class="news-item-title">' + esc(n.title) + '</div></div>'
+      + '<button class="btn btn-sm" style="background:#3a0a0a;color:#fc8181;border:1px solid #fc8181" data-id="' + esc(n.id) + '" onclick="adminDeleteNews(this.dataset.id)">&#128465;</button></div>';
+  }).join('');
+}
+
+async function adminDeleteNews(id) {
+  var key = document.getElementById('admin-key-inp').value.trim();
+  if (!confirm('Delete this news?')) return;
+  var r = await fetch('/api/admin/news/' + id, { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ adminKey: key }) });
+  var d = await r.json();
+  if (!r.ok) return setStatus(d.error || 'Error.', true);
+  loadAdminNews(key);
+}
+
+async function adminCreateReferral() {
+  var key = document.getElementById('admin-key-inp').value.trim();
+  var code = document.getElementById('adm-ref-code').value.trim();
+  var bonus = document.getElementById('adm-ref-bonus').value.trim();
+  var maxU = document.getElementById('adm-ref-max').value.trim();
+  var desc = document.getElementById('adm-ref-desc').value.trim();
+  if (!code || !bonus) return setStatus('Code and bonus required.', true);
+  var r = await fetch('/api/admin/referrals', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ adminKey: key, code: code, bonusSats: Number(bonus), maxUses: Number(maxU)||100, description: desc }) });
+  var d = await r.json();
+  if (!r.ok) return setStatus(d.error || 'Error.', true);
+  setStatus('Referral code created!', false);
+  document.getElementById('adm-ref-code').value = '';
+  document.getElementById('adm-ref-bonus').value = '';
+  loadAdminReferrals(key);
+}
+
+async function loadAdminReferrals(key) {
+  var el = document.getElementById('admin-refs');
+  if (!el) return;
+  var r = await fetch('/api/admin/referrals?adminKey=' + encodeURIComponent(key));
+  if (!r.ok) return;
+  var refs = await r.json();
+  if (!refs.length) { el.innerHTML = '<p class="muted" style="font-size:0.8em">No referral codes yet.</p>'; return; }
+  el.innerHTML = '<h4 style="margin-bottom:8px;color:#64748b">Referral Codes</h4>' + refs.map(function(ref) {
+    return '<div class="ref-row"><div><div class="ref-code">' + esc(ref.code) + '</div>'
+      + '<div class="ref-meta">' + ref.bonus_sats + ' sats &bull; ' + ref.uses + '/' + ref.max_uses + ' uses'
+      + (ref.description ? ' &bull; ' + esc(ref.description) : '') + '</div></div>'
+      + '<button class="btn btn-sm" style="background:#3a0a0a;color:#fc8181;border:1px solid #fc8181" data-id="' + esc(ref.id) + '" onclick="adminDeleteRef(this.dataset.id)">&#128465;</button></div>';
+  }).join('');
+}
+
+async function adminDeleteRef(id) {
+  var key = document.getElementById('admin-key-inp').value.trim();
+  if (!confirm('Delete this referral code?')) return;
+  var r = await fetch('/api/admin/referrals/' + id, { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ adminKey: key }) });
+  var d = await r.json();
+  if (!r.ok) return setStatus(d.error || 'Error.', true);
+  loadAdminReferrals(key);
+}
+
+async function useReferral() {
+  var nick = getNick();
+  if (!nick) return;
+  var inp = document.getElementById('ref-code-inp');
+  var code = inp.value.trim();
+  if (!code) return setStatus('Enter a referral code.', true);
+  var r = await fetch('/api/referral/use', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId: nick, code: code }) });
+  var d = await r.json();
+  if (!r.ok) return setStatus(d.error || 'Error.', true);
+  setStatus('Referral applied! You got ' + d.bonus_sats + ' bonus sats.', false);
+  inp.value = '';
+  loadBalance();
 }
 
 // ---- ASSETS ----
@@ -1493,6 +1861,8 @@ async function adminLogin() {
   var stats = await r.json();
   document.getElementById('admin-content').style.display = 'block';
   loadAdminPanel(stats);
+  loadAdminNews(_adminKey);
+  loadAdminReferrals(_adminKey);
 }
 
 async function loadAdminPanel(stats) {
@@ -1542,7 +1912,7 @@ async function loadAdminPanel(stats) {
   h += '</div>';
   h += '<button class="btn btn-sm btn-ghost" onclick="showAddAssetModal()">+ Dodaj novi asset</button>';
 
-  document.getElementById('admin-content').innerHTML = h;
+  document.getElementById('admin-main-content').innerHTML = h;
 }
 
 async function adminResolve(btn) {
@@ -1610,8 +1980,9 @@ function chatBgClick(e) { if (e.target === document.getElementById('chat-overlay
   applyTheme(_themeIdx);
   applyLang();
   updateNickBar();
+  initCardThemes();
+  loadHomeNews();
   await loadAssets();
-  loadSwap();
 })();
 </script>
 
