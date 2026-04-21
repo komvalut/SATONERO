@@ -3,7 +3,6 @@ const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 
-// Za SBP API pozive
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const app = express();
@@ -17,7 +16,6 @@ const pool = new Pool({
 
 const genId = () => crypto.randomBytes(8).toString('hex');
 
-// --- DATABASE INIT ---
 async function initDb() {
   const client = await pool.connect();
   try {
@@ -44,7 +42,7 @@ async function initDb() {
         sender_id TEXT NOT NULL, content TEXT NOT NULL, created_at BIGINT
       );
     `);
-    
+
     const initialAssets = [
       ['sats', 'Satoshi', 'crypto'], 
       ['btc', 'Bitcoin', 'crypto'], 
@@ -60,8 +58,6 @@ async function initDb() {
   } finally { client.release(); }
 }
 initDb();
-
-// --- API RUTE ---
 
 // ASSETS
 app.get('/api/assets', async (req, res) => {
@@ -92,7 +88,7 @@ app.post('/api/listings', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// SWAP / TRANSAKCIJE
+// SWAP
 app.post('/api/swap', async (req, res) => {
   const { listingId, buyerId } = req.body;
   const txId = genId();
@@ -116,7 +112,7 @@ app.post('/api/swap', async (req, res) => {
 
     await pool.query('INSERT INTO transactions (id, listing_id, buyer_id, seller_id, offer_asset, offer_amount, want_asset, want_amount, status, payment_request, invoice_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
       [txId, listingId, buyerId, l.seller_id, l.offer_asset, l.offer_amount, l.want_asset, l.want_amount, pr ? 'pending' : 'paid', pr, invId, Date.now()]);
-    
+
     res.json({ txId, paymentRequest: pr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -141,4 +137,9 @@ app.get('/api/chat/:txId', async (req, res) => {
 app.post('/api/chat/:txId', async (req, res) => {
   const { senderId, content } = req.body;
   await pool.query('INSERT INTO messages (id, ref_id, ref_type, sender_id, content, created_at) VALUES ($1,$2,$3,$4,$5,$6)',
-    [genId(), req.params
+    [genId(), req.params.txId, 'tx', senderId, content, Date.now()]);
+  res.json({ success: true });
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Server na portu ${PORT}`));
